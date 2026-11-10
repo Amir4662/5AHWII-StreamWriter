@@ -1,0 +1,340 @@
+﻿
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Typewriter</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f4f4;
+            color: #222;
+            max-width: 750px;
+            margin: 80px auto;
+            padding: 20px;
+        }
+
+        h1, .subtitle {
+            text-align: center;
+        }
+
+        .box {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px #0001;
+        }
+
+        #sentence {
+            font-size: 24px;
+            line-height: 1.9;
+            overflow-wrap: anywhere;
+            outline: none;
+            cursor: text;
+            user-select: none;
+            min-height: 90px;
+        }
+
+        .correct {
+            color: #258448;
+        }
+
+        .wrong {
+            color: #d83232;
+            background: #ffe0e0;
+        }
+
+        .current {
+            border-left: 2px solid #333;
+            animation: blink 1s step-end infinite;
+        }
+
+        @keyframes blink {
+            50% {
+                border-color: transparent;
+            }
+        }
+
+        .stats {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 25px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }
+
+            .stats div {
+                color: #777;
+                font-size: 13px;
+            }
+
+            .stats strong {
+                display: block;
+                color: #222;
+                font-size: 24px;
+                margin-top: 5px;
+            }
+
+        button {
+            margin-top: 25px;
+            padding: 11px 18px;
+            background: #333;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+            button:hover {
+                background: #555;
+            }
+
+            button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+        #result {
+            font-weight: bold;
+            color: #258448;
+        }
+
+        @media (max-width: 500px) {
+            body {
+                margin: 25px auto;
+            }
+
+            .box {
+                padding: 20px;
+            }
+
+            #sentence {
+                font-size: 20px;
+            }
+
+            .stats strong {
+                font-size: 20px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <h1>⌨ Typewriter</h1>
+    <p class="subtitle">Tippe den Satz direkt ab.</p>
+
+    <div class="box">
+        <div id="sentence"
+             tabindex="0"
+             role="textbox"
+             aria-label="Tippe den angezeigten Satz ab">Satz wird geladen...</div>
+
+        <div class="stats">
+            <div>
+                WPM
+                <strong id="wpm">0</strong>
+            </div>
+
+            <div>
+                Genauigkeit
+                <strong id="accuracy">100%</strong>
+            </div>
+
+            <div>
+                Fortschritt
+                <strong id="progress">0%</strong>
+            </div>
+        </div>
+
+        <p id="result"></p>
+
+        <button id="next" type="button">Nächster Satz</button>
+    </div>
+
+    <script>
+        const sentenceElement = document.getElementById("sentence");
+        const wpmElement = document.getElementById("wpm");
+        const accuracyElement = document.getElementById("accuracy");
+        const progressElement = document.getElementById("progress");
+        const resultElement = document.getElementById("result");
+        const nextButton = document.getElementById("next");
+
+        let sentence = "";
+        let typed = "";
+        let startTime = null;
+        let finished = false;
+
+        async function loadSentence() {
+            nextButton.disabled = true;
+            sentenceElement.textContent = "Satz wird geladen...";
+
+            try {
+                const response = await fetch("/api/sentence");
+
+                if (!response.ok) {
+                    throw new Error("Satz konnte nicht geladen werden.");
+                }
+
+                // Der Server liefert einfachen Text, kein JSON.
+                sentence = (await response.text()).trim();
+
+                // Entfernt eventuell versehentlich mitgelieferte
+                // Anführungszeichen am Anfang und Ende.
+                sentence = sentence.replace(/^["']|["']$/g, "");
+
+                if (!sentence) {
+                    throw new Error("Der Satz ist leer.");
+                }
+
+                typed = "";
+                startTime = null;
+                finished = false;
+
+                wpmElement.textContent = "0";
+                accuracyElement.textContent = "100%";
+                progressElement.textContent = "0%";
+                resultElement.textContent = "";
+
+                renderSentence();
+                sentenceElement.focus();
+            } catch (error) {
+                sentenceElement.textContent =
+                    "Fehler beim Laden des Satzes. Bitte erneut versuchen.";
+
+                console.error(error);
+            } finally {
+                nextButton.disabled = false;
+            }
+        }
+
+        function renderSentence() {
+            sentenceElement.replaceChildren();
+
+            for (let i = 0; i < sentence.length; i++) {
+                const span = document.createElement("span");
+                span.textContent = sentence[i];
+
+                if (i < typed.length) {
+                    span.className =
+                        typed[i] === sentence[i] ? "correct" : "wrong";
+                } else if (i === typed.length && !finished) {
+                    span.className = "current";
+                }
+
+                sentenceElement.appendChild(span);
+            }
+
+            updateStats();
+        }
+
+        function updateStats() {
+            let correct = 0;
+
+            for (let i = 0; i < typed.length; i++) {
+                if (typed[i] === sentence[i]) {
+                    correct++;
+                }
+            }
+
+            const accuracy = typed.length
+                ? Math.round(correct / typed.length * 100)
+                : 100;
+
+            const progress = sentence.length
+                ? Math.floor(typed.length / sentence.length * 100)
+                : 0;
+
+            let wpm = 0;
+
+            if (startTime !== null) {
+                const minutes = (Date.now() - startTime) / 60000;
+
+                if (minutes > 0) {
+                    wpm = Math.round((correct / 5) / minutes);
+                }
+            }
+
+            wpmElement.textContent = wpm;
+            accuracyElement.textContent = accuracy + "%";
+            progressElement.textContent = progress + "%";
+
+            if (typed === sentence) {
+                finished = true;
+                renderFinishedSentence();
+                resultElement.textContent =
+                    "Perfekt! Du hast den Satz geschafft!";
+            } else {
+                resultElement.textContent = "";
+            }
+        }
+
+        function renderFinishedSentence() {
+            sentenceElement.replaceChildren();
+
+            for (const character of sentence) {
+                const span = document.createElement("span");
+                span.className = "correct";
+                span.textContent = character;
+                sentenceElement.appendChild(span);
+            }
+        }
+
+        sentenceElement.addEventListener("keydown", event => {
+            if (finished) {
+                event.preventDefault();
+                return;
+            }
+
+            if (event.ctrlKey || event.metaKey || event.altKey) {
+                return;
+            }
+
+            if (event.key === "Backspace") {
+                event.preventDefault();
+                typed = typed.slice(0, -1);
+                renderSentence();
+                return;
+            }
+
+            if (event.key.length !== 1) {
+                return;
+            }
+
+            event.preventDefault();
+
+            if (typed.length >= sentence.length) {
+                return;
+            }
+
+            if (startTime === null) {
+                startTime = Date.now();
+            }
+
+            typed += event.key;
+            renderSentence();
+        });
+
+        sentenceElement.addEventListener("paste", event => {
+            event.preventDefault();
+        });
+
+        sentenceElement.addEventListener("click", () => {
+            sentenceElement.focus();
+        });
+
+        nextButton.addEventListener("click", loadSentence);
+
+        // WPM jede Sekunde aktualisieren.
+        setInterval(() => {
+            if (startTime !== null && !finished) {
+                updateStats();
+            }
+        }, 1000);
+
+        loadSentence();
+    </script>
+</body>
+</html>
